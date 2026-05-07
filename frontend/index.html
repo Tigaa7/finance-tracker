@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Finance Tracker</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; background: #f5f5f5; color: #1a1a1a; }
+    .container { max-width: 800px; margin: 0 auto; padding: 2rem 1rem; }
+    h1 { font-size: 22px; font-weight: 500; margin-bottom: 1.5rem; }
+    h2 { font-size: 15px; font-weight: 500; margin-bottom: 1rem; }
+    .stats { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-bottom: 1.5rem; }
+    .stat { background: #fff; border: 1px solid #e5e5e5; border-radius: 10px; padding: 1rem; }
+    .stat-label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .stat-val { font-size: 22px; font-weight: 500; }
+    .card { background: #fff; border: 1px solid #e5e5e5; border-radius: 10px; padding: 1rem 1.25rem; margin-bottom: 1rem; }
+    .form-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    .form-row input, .form-row select { flex: 1; min-width: 120px; padding: 8px 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; background: #fafafa; }
+    .btn { padding: 8px 18px; border-radius: 8px; border: 1px solid #ddd; background: #fff; font-size: 13px; cursor: pointer; }
+    .btn-primary { background: #185FA5; color: #fff; border-color: #185FA5; }
+    .btn-primary:hover { background: #0C447C; }
+    .btn-danger { color: #A32D2D; border-color: #E24B4A; }
+    .btn-danger:hover { background: #FCEBEB; }
+    .tx-row { display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-bottom: 1px solid #f0f0f0; gap: 8px; }
+    .tx-row:last-child { border-bottom: none; }
+    .tx-info { flex: 1; }
+    .tx-name { font-size: 13px; font-weight: 500; }
+    .tx-meta { font-size: 11px; color: #888; margin-top: 2px; }
+    .tx-amt { font-size: 13px; font-weight: 500; white-space: nowrap; }
+    .inc { color: #1D9E75; }
+    .exp { color: #E24B4A; }
+    .msg { font-size: 13px; padding: 8px 12px; border-radius: 8px; margin-top: 8px; display: none; }
+    .msg.ok { background: #E1F5EE; color: #085041; display: block; }
+    .msg.err { background: #FCEBEB; color: #791F1F; display: block; }
+    .empty { font-size: 13px; color: #aaa; text-align: center; padding: 2rem; }
+    .filter-row { display: flex; gap: 8px; margin-bottom: 1rem; flex-wrap: wrap; }
+    .filter-btn { padding: 5px 12px; border-radius: 20px; border: 1px solid #ddd; background: #fff; font-size: 12px; cursor: pointer; }
+    .filter-btn.active { background: #185FA5; color: #fff; border-color: #185FA5; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h1>Finance Tracker</h1>
+
+  <!-- Summary stats -->
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-label">Total income</div>
+      <div class="stat-val inc" id="stat-income">GHS 0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Total expenses</div>
+      <div class="stat-val exp" id="stat-exp">GHS 0</div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Balance</div>
+      <div class="stat-val" id="stat-bal">GHS 0</div>
+    </div>
+  </div>
+
+  <!-- Add transaction form -->
+  <div class="card">
+    <h2>Add transaction</h2>
+    <div class="form-row">
+      <select id="f-type">
+        <option value="income">Income</option>
+        <option value="expense">Expense</option>
+      </select>
+      <input type="number" id="f-amount" placeholder="Amount (GHS)" min="0" step="0.01">
+      <select id="f-category">
+        <option>Salary</option><option>Food</option>
+        <option>Transport</option><option>Airtime</option>
+        <option>Rent</option><option>Entertainment</option>
+        <option>Other</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <input type="text" id="f-desc" placeholder="Description">
+      <input type="date" id="f-date">
+      <button class="btn btn-primary" onclick="addTransaction()">Add</button>
+    </div>
+    <div class="msg" id="form-msg"></div>
+  </div>
+
+  <!-- Transaction list -->
+  <div class="card">
+    <h2>Transactions</h2>
+    <div class="filter-row" id="filters"></div>
+    <div id="tx-list"></div>
+  </div>
+
+</div>
+ <script>
+const API = 'http://127.0.0.1:8000';
+const CATS = ['All','Salary','Food','Transport',
+              'Airtime','Rent','Entertainment','Other'];
+let allTx = [];
+let activeFilter = 'All';
+
+// Set today's date as default in the date input
+document.getElementById('f-date').value =
+  new Date().toISOString().split('T')[0];
+
+// Build the category filter buttons
+function buildFilters() {
+  document.getElementById('filters').innerHTML =
+    CATS.map(c => `
+    <button class="filter-btn${c===activeFilter?' active':''}"
+      onclick="setFilter('${c}')">${c}</button>`).join('');
+}
+
+// Switch active category filter
+function setFilter(cat) {
+  activeFilter = cat;
+  buildFilters();
+  renderTx();
+}
+
+// Load all transactions from the API
+async function loadTransactions() {
+  const res = await fetch(`${API}/transactions`);
+  allTx = await res.json();
+  renderTx();
+  updateStats();
+}
+
+// Render filtered transaction list
+function renderTx() {
+  const list = activeFilter === 'All'
+    ? allTx
+    : allTx.filter(t => t.category === activeFilter);
+  const el = document.getElementById('tx-list');
+  if (!list.length) {
+    el.innerHTML = '<div class="empty">No transactions yet</div>';
+    return;
+  }
+  el.innerHTML = list.map(t => `
+    <div class="tx-row">
+      <div class="tx-info">
+        <div class="tx-name">${t.description || t.category}</div>
+        <div class="tx-meta">ID:${t.id} · ${t.category} · ${t.date}</div>
+      </div>
+      <span class="tx-amt ${t.type==='income'?'inc':'exp'}">
+        ${t.type==='income'?'+':'-'} GHS ${t.amount.toFixed(2)}
+      </span>
+      <button class="btn btn-danger" onclick="deleteTransaction(${t.id})">
+        Delete
+      </button>
+    </div>`).join('');
+}
+
+// Update the 3 summary stat cards
+function updateStats() {
+  const income = allTx.filter(t=>t.type==='income')
+    .reduce((s,t)=>s+t.amount, 0);
+  const exp = allTx.filter(t=>t.type==='expense')
+    .reduce((s,t)=>s+t.amount, 0);
+  const bal = income - exp;
+  document.getElementById('stat-income').textContent =
+    `GHS ${income.toFixed(2)}`;
+  document.getElementById('stat-exp').textContent =
+    `GHS ${exp.toFixed(2)}`;
+  const balEl = document.getElementById('stat-bal');
+  balEl.textContent = `GHS ${bal.toFixed(2)}`;
+  balEl.style.color = bal >= 0 ? '#1D9E75' : '#E24B4A';
+}
+
+// Add a new transaction via POST /transactions
+async function addTransaction() {
+  const body = {
+    type:        document.getElementById('f-type').value,
+    amount:      parseFloat(document.getElementById('f-amount').value),
+    category:    document.getElementById('f-category').value,
+    description: document.getElementById('f-desc').value,
+    date:        document.getElementById('f-date').value,
+  };
+  const msg = document.getElementById('form-msg');
+  if (!body.amount || body.amount <= 0) {
+    msg.className = 'msg err';
+    msg.textContent = 'Please enter a valid amount';
+    return;
+  }
+  const res = await fetch(`${API}/transactions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  const data = await res.json();
+  if (res.ok) {
+    msg.className = 'msg ok';
+    msg.textContent = 'Transaction saved!';
+    document.getElementById('f-amount').value = '';
+    document.getElementById('f-desc').value = '';
+    loadTransactions();
+  } else {
+    msg.className = 'msg err';
+    msg.textContent = data.detail || 'Something went wrong';
+  }
+  setTimeout(() => msg.className = 'msg', 3000);
+}
+
+// Delete a transaction via DELETE /transactions/{id}
+async function deleteTransaction(id) {
+  if (!confirm(`Delete transaction ${id}?`)) return;
+  await fetch(`${API}/transactions/${id}`, { method: 'DELETE' });
+  loadTransactions();
+}
+
+// Start everything when page loads
+buildFilters();
+loadTransactions();
+</script>
+</body>
+</html>
